@@ -40,7 +40,6 @@ class SmartTrashPickerAdvertisement(Advertisement):
         # This is a peripheral device
         Advertisement.__init__(self, bus, index, 'peripheral')
         # Have our custom UIUD 
-        # TODO: See if I need to send whole 128-bit UIUD b/c its non-standard :(
         self.add_service_uuid(SMART_TRASH_PICKER_SERVICE_16_BIT_UIUD)
         # We don't need to add manufacturer data
         # self.add_manufacturer_data(0xffff, [0x00, 0x01, 0x02, 0x03, 0x04])
@@ -59,10 +58,10 @@ def stp_register_ad_error_cb(error):
     print("Failed to register advertisment")
     print(error)
 
-############################################################3
-# GATT classes (Service, Characteristic, Descriptor)
+############################################################
+# GATT classes (Service, Characteristic, Descriptor)       #
+############################################################
 
-# TODO: switch to 'indicate' flag if reliability is an issue
 class TrashGrabbedChrc(Characteristic):
     """Characteristic that will notify/indicate when trash has been picked up
 
@@ -75,29 +74,33 @@ class TrashGrabbedChrc(Characteristic):
         Characteristic.__init__(
                 self, bus, index,
                 self.TRASH_GRABBED_CHRC_UIUD,
-                # TODO: remove 'read' after debugging
-                ['notify', 'read'],
+                # notify is less battery intensive, but unreliable
+                # indicate ensures reliable transmission, but is more resource intensive
+                ['indicate'],
                 service)
         self.notifying = False
+
 
     def notify_trash_grabbed(self):
         """Invoke this method to notify that trash has been grabbed
             (e.g. one thread will invoke this when it sees that the
             IR sensor has been tripped in the handle)
         """
+        print("notify_trash_grabbed() invoked")
         if not self.notifying:
             return
+
+        # Send a random integer from 0-10 for debugging purposes
+        random_int = randint(0, 10)
         self.PropertiesChanged(
                 GATT_CHRC_IFACE,
-                { 'Value': [dbus.Boolean(1)] },
+                { 'Value': [dbus.Byte(random_int)] },
                 []
         )
 
-
-    # TODO: Remove ReadValue after debugging
-    def ReadValue(self, options):
-        print("ReadValue invoked")
-        return [ dbus.Byte('H'), dbus.Byte('I') ]
+    def WriteValue(self, value, options):
+        print("Smart Trash Picker WriteValue Called")
+        self.notify_trash_grabbed()
 
     def StartNotify(self):
         if self.notifying:
@@ -145,8 +148,25 @@ def register_app_error_cb(error):
 
 
 
-# TODO: spawn another thread to listen for GPIO inputs and add shit (or have another process get it???)
-#      Gobject makes this more complicated...perhaps GBus from another thread???
+
+# Entry point for GPIO thread
+def gpio_poll_thread(trash_grabbed_chrc):
+    print("GPIO polling thread started")
+
+
+
+    import time
+
+
+    while True:
+        # TODO: have a While True loop to listen for GPIO inputs
+        time.sleep(2)
+        trash_grabbed_chrc.notify_trash_grabbed()
+
+
+    
+
+
 # Main code
 if __name__ == '__main__':
 
@@ -204,6 +224,18 @@ if __name__ == '__main__':
             reply_handler=register_app_cb,
             error_handler=register_app_error_cb
     )
+
+
+    # Have another thread have a reference to the TrashGrabbedChrc
+    #   so it can call notify_trash_grabbed(), independent of 
+    #   GObject's MainLoop, when it recieves GPIO input that 
+    #   the user has grabbed an item of garbage
+    import threading
+    print("Attempting to start GPIO thread")
+    # This is an indexing hack to get the exact TrashGrabbedChrc object, but I need to finish this project
+    trash_grabbed_chrc = stp_app.services[3].characteristics[0]
+    gpio_thread = threading.Thread(target=gpio_poll_thread, args=(trash_grabbed_chrc,))
+    gpio_thread.start()
 
 
 
