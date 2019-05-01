@@ -1,3 +1,22 @@
+######################################################
+#
+# Author: Michael Rechenberg
+#
+# This script runs a basic GATT server and
+#   performs BLE advertisements for a 
+#   "smart trash picker service"
+#
+# Clients that connect to the server will
+#   be notified when trash is picked up
+#
+# Important UIUDS:
+#   Smart Trash Picker Service UIUD: 0x1337
+#    |
+#    --> Trash Grabbed Characteristic UIUD: 0x1574
+#
+#####################################################
+
+
 import dbus
 import dbus.exceptions
 import dbus.mainloop.glib
@@ -13,7 +32,8 @@ import sys
 from random import randint
 
 
-# Example BLE code from bluez
+# Example BLE code from bluez that contains the classes 
+#   we need to create our GATT server
 from ble_advertisement import Advertisement, find_adapter, \
         BLUEZ_SERVICE_NAME, LE_ADVERTISING_MANAGER_IFACE, \
         DBUS_OM_IFACE, DBUS_PROP_IFACE
@@ -31,19 +51,21 @@ SMART_TRASH_PICKER_SERVICE_FULL_UIUD = '00001337-0000-1000-8000-00805f9b34fb'
 SMART_TRASH_PICKER_SERVICE_16_BIT_UIUD = '1337'
 
 
-# Advertisment classes
+############################################################
+# BLE Advertisment classes                                 #
+############################################################
 class SmartTrashPickerAdvertisement(Advertisement):
     """Advertisement for the SmartTrashPicker
     """
 
     def __init__(self, bus, index):
-        # This is a peripheral device
+        # Mark this BLE entity (Raspberry Pi) as a peripheral device
         Advertisement.__init__(self, bus, index, 'peripheral')
-        # Have our custom UIUD 
+        # Have the advertisemtn contain our custom UIUD for SmartTrashPickerService
         self.add_service_uuid(SMART_TRASH_PICKER_SERVICE_16_BIT_UIUD)
-        # We don't need to add manufacturer data
+        # We don't need to add manufacturer data, so we comment it out
         # self.add_manufacturer_data(0xffff, [0x00, 0x01, 0x02, 0x03, 0x04])
-        # We don't need to add service data 
+        # We don't need to add service data, so we comment that out
         # self.add_service_data('9999', [0x00, 0x01, 0x02, 0x03, 0x04])
         self.add_local_name('SmartTrashPickerAdvertisement')
         self.include_tx_power = True
@@ -58,12 +80,13 @@ def stp_register_ad_error_cb(error):
     print("Failed to register advertisment")
     print(error)
 
+
 ############################################################
 # GATT classes (Service, Characteristic, Descriptor)       #
 ############################################################
 
 class TrashGrabbedChrc(Characteristic):
-    """Characteristic that will notify/indicate when trash has been picked up
+    """BLE Characteristic that will notify/indicate when trash has been picked up
 
     """
 
@@ -91,6 +114,9 @@ class TrashGrabbedChrc(Characteristic):
             return
 
         # Send a random integer from 0-10 for debugging purposes
+        # The exact integer sent has no application purposes, 
+        #   but we can tell that a new indication has been sent
+        #   on the client-side if we see that the value changed
         random_int = randint(0, 10)
         self.PropertiesChanged(
                 GATT_CHRC_IFACE,
@@ -98,6 +124,7 @@ class TrashGrabbedChrc(Characteristic):
                 []
         )
 
+    # Implement necessary GATT_CHRC_IFACE methods
     def StartNotify(self):
         if self.notifying:
             print('Already notifying, nothing to do')
@@ -115,7 +142,9 @@ class TrashGrabbedChrc(Characteristic):
 
 
 class SmartTrashPickerService(Service):
-    """Smart Trash Picker Service (notify client when trash is picked up)
+    """BLE Service that will indicate client when trash is picked up
+
+        Only has one characteristic, namely TrashGrabbedChrc
     """
 
     def __init__(self, bus, index):
@@ -125,15 +154,17 @@ class SmartTrashPickerService(Service):
 
 
 class SmartTrashPickerApplication(Application):
-    """Smart Trash Picker Application
+    """BLE Smart Trash Picker Application
 
-        As of now, it only hosts one service, SmartTrashPickerService
+        As of now, it only contains one service, SmartTrashPickerService
     """
 
     def __init__(self, bus):
         Application.__init__(self, bus)
+        # The 36 is arbitrary
         self.add_service(SmartTrashPickerService(bus, 36))
 
+# Callbacks to register when adding Application to BlueZ manager
 def register_app_cb():
     print("STP Application successfully registered")
 
@@ -144,26 +175,78 @@ def register_app_error_cb(error):
 
 
 
-
-# Entry point for GPIO thread
+#################################
+# Entry point for GPIO thread   #
+#################################
 def gpio_poll_thread(trash_grabbed_chrc):
+    """Target function for GPIO worker thread
+
+        Arguments:
+            trash_grabbed_chrc: The TrashGrabbedChrc to use
+                for sending BLE notifications
+    """
     print("GPIO polling thread started")
 
-
-
+    import RPi.GPIO as GPIO
     import time
 
+    # Use GPIO Pin 17 for the input line from IR collector
+    IR_SENSOR_INPUT_PIN_NUM = 17
+   
+    # Once we detected a falling edge, we busy wait until
+    #   the GPIO input goes back to 1 (i.e. the user has
+    #   released the handle and completed picking up trash)
+    # POLLING_WAIT_SEC sets how long we time.sleep() before
+    #   polling the status of IR_SENSOR_INPUT_PIN_NUM again
+    POLLING_WAIT_SEC = 0.25
 
-    while True:
-        # TODO: have a While True loop to listen for GPIO inputs
-        time.sleep(2)
-        trash_grabbed_chrc.notify_trash_grabbed()
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(IR_SENSOR_INPUT_PIN_NUM, GPIO.IN)
 
 
-    
+    print("Beginning GPIO thread's main loop")
+    try: 
+        while True:
+
+            print("Waiting for falling edge")
+
+            # Intelligently wait until we have falling edge
+            #  (e.g. the handle of the trash picker was closed when
+            #    someone grabbed the trash)
+            GPIO.wait_for_edge(IR_SENSOR_INPUT_PIN_NUM, GPIO.FALLING, bouncetime=200)
 
 
-# Main code
+            # Busy wait (poll) until the edge rises again
+            # (e.g. the user has released the handle to put the
+            #   garbage into their bucket)
+            # This extra time.sleep is so we handle debouncing and we only send 
+            #   one BLE indication per handle press
+            time.sleep(0.01)
+
+
+            if not GPIO.input(IR_SENSOR_INPUT_PIN_NUM):
+                # This was a valid falling edge, so busy wait until the edge rises,
+                #    (e.g. when the user releases the handle and the IR 
+                #     beam is no longer obstructed)
+                #    then send the BLE indication using notify_trash_grabbed
+                print("Valid handle press detected, beginning busy wait")
+
+                while not GPIO.input(IR_SENSOR_INPUT_PIN_NUM):
+                    time.sleep(POLLING_WAIT_SEC)
+
+
+                print("Handle released, sending BLE indication")
+                trash_grabbed_chrc.notify_trash_grabbed()
+    finally:
+        print("GPIO cleanup")
+        GPIO.cleanup()
+
+
+        
+
+###############################
+#          Main code          #
+###############################
 if __name__ == '__main__':
 
     # Initialize the main loop
@@ -177,7 +260,7 @@ if __name__ == '__main__':
         print('LEAdvertisingManager interface not found')
         exit(1)
 
-    # Turn on the BLE adapter
+    # Turn on the BLE adapter on the Pi
     print("Turning on the Bluetooth Adapter")
     adapter_props = dbus.Interface(
             bus.get_object(BLUEZ_SERVICE_NAME, adapter),
@@ -205,7 +288,8 @@ if __name__ == '__main__':
     )
 
 
-    # Register the GATT Application
+    # Register the GATT Application that will notify GATT clients
+    #   when trash is picked up
     print("Registering the Application")
     service_manager = dbus.Interface(
             bus.get_object(BLUEZ_SERVICE_NAME, adapter),
@@ -222,26 +306,33 @@ if __name__ == '__main__':
     )
 
 
-    # Have another thread have a reference to the TrashGrabbedChrc
-    #   so it can call notify_trash_grabbed(), independent of 
+    # Start a worker thread that has a reference to the TrashGrabbedChrc
+    #   we created when creating the SmartTrashPickerApplication
+    # The worker thread can call notify_trash_grabbed(), independent of 
     #   GObject's MainLoop, when it recieves GPIO input that 
     #   the user has grabbed an item of garbage
     import threading
     print("Attempting to start GPIO thread")
-    # This is an indexing hack to get the exact TrashGrabbedChrc object, but I need to finish this project
+    # NOTE: this is hack to get the TrashGrabbedChrc object, and really
+    #   we should be grabbing it from DBus using object paths
+    # But I have to meet a deadline for INFO 490 so this hack will have
+    #   to make do until I can do a v2.0
     trash_grabbed_chrc = stp_app.services[3].characteristics[0]
     gpio_thread = threading.Thread(target=gpio_poll_thread, args=(trash_grabbed_chrc,))
     gpio_thread.start()
 
 
 
-    # Get the main loop
+    # Get the GObject main loop
     mainloop = GObject.MainLoop()
 
 
     # Start the main loop (blocks until process is killed/keyboard interrupt/etc)
+    # When the main loop is running, the BLE advertising and BLE application
+    #   we registered with BlueZ will start to run and run until this process is 
+    #   destroyed
     print()
-    print("STARTING MAIN LOOP")
+    print("STARTING MAIN GObject LOOP")
     print()
 
     try:
