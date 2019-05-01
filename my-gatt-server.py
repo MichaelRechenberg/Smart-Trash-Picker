@@ -98,10 +98,6 @@ class TrashGrabbedChrc(Characteristic):
                 []
         )
 
-    def WriteValue(self, value, options):
-        print("Smart Trash Picker WriteValue Called")
-        self.notify_trash_grabbed()
-
     def StartNotify(self):
         if self.notifying:
             print('Already notifying, nothing to do')
