@@ -1,0 +1,12 @@
+[Unit]
+Description=Start Bluetooth LE GATT server for Smart Trash Picker upon Pi boot (INFO 490)
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /home/pi/Workspace/Smart-Trash-Picker/start_server.sh &
+PIDFile=/run/ble-stp.pid
+
+[Install]
+WantedBy=multi-user.target
+
