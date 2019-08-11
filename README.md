@@ -1,7 +1,7 @@
 # Smart-Trash-Picker
 This repository contains code for a Pi Zero W to be used on a "smart" trash picker (when the user picks up rubbish, send a bluetooth message to the user's phone and request the user's phone to record the current location).  Originally an INFO 490 final project
 
-See this slideshow for more information about what a Smart Trash Picker is: https://docs.google.com/presentation/d/10vXZpBdQuiOv0UkGF1l6Ebf5Jlyhi4zowDS1sjI3Yiw/edit?usp=drivesdk
+See this slideshow for more information about what a Smart Trash Picker is: https://docs.google.com/presentation/d/10vXZpBdQuiOv0UkGF1l6Ebf5Jlyhi4zowDS1sjI3Yiw/edit?usp=sharing
 
 # Running the BLE Code
 First, activate the smart-trash-picker conda environment
